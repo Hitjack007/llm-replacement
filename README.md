@@ -9,7 +9,7 @@ This is a small proof-of-concept language model (not an LLM) that incorporates t
 * Continuous data streaming
 * Test-time training
 
-The model is built with MLX, so it should run fine on all Apple Silicon devices. MLX on Linux has been tested by community members and it should work fine as well. On Windows, there are a few unofficial work-in-progress Pytorch ports but they aren't 1:1 compatible yet.
+The model is built with MLX, so it should run fine on all Apple Silicon devices. MLX on Linux has been tested by community members and it should work fine as well. On Windows, there are a few unofficial work-in-progress Pytorch ports but they aren't 1:1 compatible yet. I have managed to get the model running on WSL however, and it does train.
 
 Being a proof of concept I have only trained a 4.5-million parameter model (keep in mind, GPT-1 was ~117m) for about 12 hours, but there are promising results. The model tends to misspell characters (since it outputs byte-by-byte, rather than token-by-token) but it is able to close quotes/brackets and such. Given further training and scaling up the model more interesting results could occur. I'm also using a very small dataset, so there is a lot more that can be fed into the model.
 
