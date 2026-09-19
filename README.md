@@ -15,7 +15,7 @@ Being a proof of concept I have only trained a 4.5-million parameter model (keep
 
 This model architecture was designed in about a month by me (a solo high school dev) and some Gemini (only pair programming, no agents). I wrote about a dozen prototypes before creating this architecture. I write READMEs myself without AI.
 
-Feel free to fork the training and benchmark code (everything is under MIT). I really encourage you to try things out, submit issues, and fork the repo.
+Feel free to fork the training and benchmark code (everything is under MIT). I really encourage you to try things out, submit issues, and fork the repo. I also really appreciate contributions to the project.
 
 <img width="499" height="497" alt="3f7f1530-c0c7-43c4-9981-30e9023a19fb" src="https://github.com/user-attachments/assets/eb7e5a97-09b5-4a7b-9484-eb898042e9dc" />
 
@@ -24,16 +24,25 @@ Feel free to fork the training and benchmark code (everything is under MIT). I r
 Model weights (in ```.safetensors```) are not provided because GitHub doesn't like very large files. But, you can train your own model simply by initializing a ```venv``` and installing dependencies with ```pip install -r requirements.txt``` (just ```mlx```, no other libraries needed), then running ```main.py```.
 
 ```bash
-python main.py --mode train --pattern 'wikipedia_clean/**/wiki_*'
-python main.py --mode chat
-python main.py --mode chatreadonly   # still trains in memory, skips disk save
-python main.py --mode chat --frozen  # no in-memory training either
-python benchmark.py --path experimental-4.5m.safetensors
+python main.py <path> train
+python main.py <path> chat
+
+# does not save to disk
+python main.py <path> chat --no-save
+
+# does not modify weights
+python main.py <path> chat --frozen
+
+# does not save to disk or modify weights
+python main.py <path> chat --no-save --frozen
+
+# benchmark with CoLA
+python benchmark.py <path> <epochs> <slice>
 ```
 
-```--mode``` is required: ```train``` trains on the dataset, ```chat``` chats with continual training. There is also ```chatreadonly``` for readonly chat (still trains weights in memory, but will not re-save to disk) and ```chatnotrace``` if you want to break things. Pass ```--frozen``` with any chat mode to disable in-memory training as well. You will have to configure your own dataset by modifying the code (to run dataset mode), but you should be able to run chat mode without modifying anything if you have weights already.
+You will have to configure your own dataset to run dataset mode, but you should be able to run chat mode without modifying anything if you have weights already.
 
-Once it begins training, you can safely ^C the program and it will save weights. It should also periodically save weights if I'm not mistaken. The saved weights include the internal memory so the model will remember that the next time it runs. You can launch into chat mode and the memory should carry on from whatever it was learning in training.
+Once it begins training, you can safely ^C the program and it will save weights. It will also periodically save weights every so often. The saved weights include the internal memory so the model will remember that the next time it runs. You can launch into chat mode and the memory should carry on from whatever it was learning in training.
 
 ## How it works
 
@@ -48,9 +57,7 @@ The two important hyperparameters are the size of the latent vector (dim) and th
 
 For reproduction purposes the dataset I trained my model on is ```simplewiki-20260801-pages-articles.xml.bz2```, from the Wikipedia dumps.
 
-## Benchmark (CoLA)
-
-```benchmark.py``` freezes the backbone and trains a small linear probe on CoLA (Matthews correlation). Download CoLA from https://nyu-mll.github.io/CoLA/ so that ```CoLA/original/raw/in_domain_train.tsv``` exists, then run ```python benchmark.py```. A dev slice is held out automatically so the reported score reflects generalization.
+## A graphical view
 
 I think this probably will contribute to solving continual learning and memory but I need other people to review and verify my work! Please feel free to open GitHub issues to tell me what's wrong. If you have compute (e.g. you are a lab or just have GPUs lying around), feel free to fork my code and train larger models as well, with credit. I personally don't have enough compute and as such I can't really train very large models.
 

@@ -1,6 +1,8 @@
+import argparse
 import glob
 import itertools
 import os
+import random
 import sys
 import time
 from datetime import datetime
@@ -65,6 +67,8 @@ class Model(nn.Module):
         temp = mx.maximum(0.1, self.temp * (1.0 - self.temp * entropy)).item()
         return mx.random.categorical(output / temp)
 
+    def evaluate(self): mx.eval(*[layer.states for layer in self.layers])
+
     def reset(self):
         for layer in self.layers:
             layer.decay = mx.zeros((self.dim, ))
@@ -73,9 +77,11 @@ class Model(nn.Module):
             layer.decaytrace = mx.zeros((self.dim, ))
             layer.embedtrace = mx.zeros((256, self.dim))
 
-        mx.eval(*[layer.states for layer in self.layers])
+        self.evaluate()
 
-    def step(self, c: mx.array, dummies: mx.array):
+    def step(self, c: mx.array, dummies: mx.array | None = None, frozen: bool = False):
+        if dummies is None: dummies = [mx.zeros((self.dim, )) for _ in range(self.layercount)]
+
         enc = self.encoder(c)
         x = enc
             
@@ -83,48 +89,41 @@ class Model(nn.Module):
 
         for i, layer in enumerate(self.layers):
             x, state, decay = layer(enc, x, dummies[i])
+            if frozen: layer.states = mx.stop_gradient(state)
 
             states.append(state)
             decays.append(decay)
 
         return (x, states, decays), self.decoder(x)
 
-    def __call__(self, currb: int, nextb: int | None, end: bool, notrace: bool = False, frozen: bool = False):
+    def __call__(self, currb: int, nextb: int | None, end: bool, frozen: bool):
         c = mx.array(currb)
 
-        if notrace:
-            _, (output, stop) = self.step(c, [mx.zeros((self.dim, )) for _ in range(self.layercount)])
-            return self.sample(output).item(), stop.item()
-
         if frozen:
-            enc = self.encoder(c)
-            x = enc
+            _, (output, stop) = self.step(c, frozen = True)
 
-            for layer in self.layers:
-                x, state, _ = layer(enc, x, mx.zeros((self.dim, )))
-                layer.states = mx.stop_gradient(state)
-
-            mx.eval(*[layer.states for layer in self.layers])
-            output, stop = self.decoder(x)
+            self.evaluate()
             return self.sample(output).item(), stop.item()
 
         p = self.trainable_parameters()
 
         def fwd(params, dummies: list[mx.array]):
             self.update(params)
+
             (x, states, decays), (output, stop) = self.step(c, dummies)
 
-            loss = mx.maximum(0.0, 1.0 - mx.sqrt(mx.var(x) + 1e-4)) # variance
+            loss = mx.maximum(0.0, 1.0 - mx.sqrt(mx.var(x) + 1e-4))
             if nextb is not None:
                 n = mx.array(nextb)
                 tgt = mx.stop_gradient(self.encoder(n))
 
-                loss = loss + mx.mean(mx.square(x - tgt)) # pred mse
-                loss = loss - output[n] + mx.logsumexp(output) # ce
+                loss = loss + mx.mean(mx.square(x - tgt))
+                loss = loss - output[n] + mx.logsumexp(output)
 
-                loss = loss + mx.mean(mx.square(stop - mx.array([1.0 if end else 0.0]))) # stop mse
-
-            return loss, (states, decays, output, stop) # loss = variance loss + pred mse loss + crossentropy loss + stop mse loss
+                loss = loss + mx.mean(mx.square(stop - mx.array([1.0 if end else 0.0])))
+                
+            # loss = variance loss + pred mse loss + crossentropy loss + stop mse loss
+            return loss, (states, decays, output, stop)
 
         (_, (states, decays, output, stop)), (grads, dlds_s) = mx.value_and_grad(
             fwd, argnums = (0, 1)
@@ -182,6 +181,10 @@ class Model(nn.Module):
         if model: self.update(util.tree_unflatten(list(model.items())))
         if opts: self.optimizer.state = util.tree_unflatten(list(opts.items()))
 
+    def count(self) -> int:
+        per_layer = self.dim * self.dim + 3 * self.dim
+        return 256 * self.dim + self.layercount * per_layer + 256 * self.dim + 256 + self.dim + 1
+
 class Runtime:
     def __init__(self, path: str, threshold: float, **kwargs):
         self.model = Model(**kwargs)
@@ -195,18 +198,17 @@ class Runtime:
         self.step += 1
         if self.step % 500 == 0: self.model.save(self.path)
 
-    def call(self, c: int, n: int | None, end: bool, readonly: bool = False, notrace: bool = False, frozen: bool = False):
-        if frozen:
-            return self.model(c, n, end, frozen = True)
-        outputs = self.model(c, n, end, notrace)
-        if not readonly: self.save()
+    def call(self, c: int, n: int | None, end: bool, save: bool, frozen: bool):
+        outputs = self.model(c, n, end, frozen)
+
+        if save: self.save()
         return outputs
 
     def write(self, b: int):
         sys.stdout.buffer.write(bytes([b]))
         sys.stdout.flush()
 
-    def chat(self, readonly: bool = False, notrace: bool = False, frozen: bool = False):
+    def chat(self, save: bool, frozen: bool):
         while True:
             text = input(f'\n[{self.now()} | {0 if self.prevtime is None else time.time() - self.prevtime:.4f}s]\nUser >> ')
             self.prevtime = time.time()
@@ -214,92 +216,66 @@ class Runtime:
             data = (text + '\n').encode('utf-8')
             
             for i, (c, n) in enumerate(itertools.pairwise(data)):
-                b, _ = self.call(c, n, i == len(data) - 2, readonly, notrace, frozen)
+                b, _ = self.call(c, n, i == len(data) - 2, save, frozen)
 
             print(f'\n[{self.now()}]\nModel >> ', end = '', flush = True)
 
             b = data[-1]
             while True:
-                b, stop = self.call(b, None, False, readonly, notrace, frozen)
+                b, stop = self.call(b, None, False, save, frozen)
                 self.write(b)
+
                 if stop > self.threshold:
                     print()
                     break
 
-    def dataset(self, pattern: str = 'wikipedia_clean/**/wiki_*'):
-        files = glob.glob(pattern, recursive = True)
+    def train(self, save: bool, frozen: bool, dataset: str):
+        files = glob.glob(dataset, recursive = True)
 
         if not files:
             raise FileNotFoundError(
-                f"No training files matched {pattern!r}. "
-                "Download e.g. simplewiki XML dump, clean it into wikipedia_clean/, "
-                "or pass a different pattern."
+                f'Could not find training files with the following glob: {dataset!r}. Try downloading a dataset first.'
             )
+
+        random.shuffle(files)
 
         while True:
             for file in files:
                 with open(file, 'r', encoding = 'utf-8', errors = 'ignore') as f:
                     for line in f:
                         data = line.encode('utf-8')
-                        if len(data) < 2:
-                            continue
+                        if len(data) < 2: continue
+
                         for i, (c, n) in enumerate(itertools.pairwise(data)):
-                            b, _ = self.call(c, n, i == len(data) - 2)
+                            b, _ = self.call(c, n, i == len(data) - 2, save, frozen)
                             self.write(b)
 
-    def now(self):
-        return datetime.now().strftime('%d/%m/%Y, %H:%M:%S')
+    def now(self): return datetime.now().strftime('%d/%m/%Y, %H:%M:%S')
 
-    def __call__(self, mode: str, frozen: bool = False):
-        modes = ['train', 'chat', 'chatreadonly', 'chatnotrace']
-
-        if mode not in modes:
-            print(f'\nInvalid mode {mode!r}. Choose from {modes}.')
-            return
-        mode = modes.index(mode)
-
+    def __call__(self, mode: str, dataset: str, save: bool, frozen: bool):
         self.model.load(self.path)
         print()
 
         try:
             match mode:
-                case 0: self.dataset()
-                case 1: self.chat(frozen = frozen)
-                case 2: self.chat(readonly = True, frozen = frozen)
-                case 3: self.chat(readonly = True, notrace = True)
+                case 'train': self.train(save, frozen, dataset)
+                case 'chat': self.chat(save, frozen)
 
         finally:
-            if mode in (0, 1) and not frozen: self.model.save(self.path)
-
-def count_params(dim: int, layers: int) -> int:
-    per_layer = dim * dim + 3 * dim
-    return 256 * dim + layers * per_layer + 256 * dim + 256 + dim + 1
+            if save: self.model.save(self.path)
 
 if __name__ == '__main__':
-    import argparse
+    parser = argparse.ArgumentParser(description = 'test-model-thing')
+    parser.add_argument('path')
+    parser.add_argument('mode', choices = ['train', 'chat'])
 
-    parser = argparse.ArgumentParser(description='Test-Model-Thing: byte-level recurrent LM with MLX.')
-    parser.add_argument('--mode', choices=['train', 'chat', 'chatreadonly', 'chatnotrace'], required=True)
-    parser.add_argument('--frozen', action='store_true', help='Chat without any in-memory training (weights frozen, memory still advances).')
-    parser.add_argument('--path', default='experimental-4.5m.safetensors')
-    parser.add_argument('--threshold', type=float, default=0.35)
-    parser.add_argument('--dim', type=int, default=512)
-    parser.add_argument('--layers', type=int, default=16)
-    parser.add_argument('--temp', type=float, default=0.75)
-    parser.add_argument('--lr', type=float, default=5e-4)
-    parser.add_argument('--pattern', default='wikipedia_clean/**/wiki_*',
-                        help='Glob for training files (train mode).')
+    parser.add_argument('--frozen', action = 'store_true')
+    parser.add_argument('--no-save', action = 'store_false')
+    parser.add_argument('--dataset', default = 'wikipedia_clean/**/wiki_*')
+
     args = parser.parse_args()
 
-    print(f'params ~= {count_params(args.dim, args.layers):,}')
-    runtime = Runtime(path=args.path, threshold=args.threshold, dim=args.dim,
-                      layers=args.layers, temp=args.temp, lr=args.lr)
-    if args.mode == 'train':
-        runtime.model.load(runtime.path)
-        print()
-        try:
-            runtime.dataset(args.pattern)
-        finally:
-            runtime.model.save(runtime.path)
-    else:
-        runtime(args.mode, frozen = args.frozen)
+    runtime = Runtime(path = args.path, threshold = 0.35, dim = 512, layers = 16, temp = 0.75, lr = 5e-4)
+    print(f'parameters: {runtime.model.count():,}')
+
+    runtime(args.mode, args.dataset, args.no_save, args.frozen)
