@@ -32,7 +32,7 @@ Also below is some results from CoLA after training a model for ~30 minutes. GPT
 
 ## Training your own model
 
-Model weights (in ```.safetensors```) are not provided because GitHub doesn't like very large files. But, you can train your own model simply by initializing a ```venv``` and installing dependencies with ```pip install -r requirements.txt``` (just ```mlx```, no other libraries needed), then running ```main.py```.
+Model weights (in ```.safetensors```) are not provided because GitHub doesn't like very large files. But, you can train your own model simply by initializing a ```venv``` and installing dependencies with ```pip install mlx``` on Mac or ```pip install mlx[cuda]``` on Linux with GPU or ```pip install mlx[cpu]``` on Linux with CPU. Then run ```main.py```.
 
 ```bash
 python main.py <path> train
