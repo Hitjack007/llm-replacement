@@ -41,6 +41,8 @@ class Layer(nn.Module):
         self.weights = nn.Linear(dim, dim, bias = False)
         self.silu = nn.SiLU()
 
+        self.freeze(keys = ['states', 'decaytrace', 'embedtrace'], recurse = False)
+
     def __call__(self, enc: mx.array, x: mx.array, dummy: mx.array):
         decay = mx.sigmoid(self.decay)
         state = (decay * self.states) + enc + dummy
