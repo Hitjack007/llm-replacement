@@ -71,7 +71,6 @@ class Model(nn.Module):
 
     def reset(self):
         for layer in self.layers:
-            layer.decay = mx.zeros((self.dim, ))
             layer.states = mx.zeros((self.dim, ))
 
             layer.decaytrace = mx.zeros((self.dim, ))
