@@ -1,10 +1,4 @@
-import argparse
-import glob
-import itertools
-import os
-import random
-import sys
-import time
+import argparse, glob, itertools, math, os, random, sys, time
 from datetime import datetime
 
 import mlx.core as mx
@@ -28,12 +22,14 @@ class Decoder(nn.Module):
     def __call__(self, x: mx.array): return self.decode(x), mx.sigmoid(self.stop(x))
 
 class Layer(nn.Module):
-    def __init__(self, dim: int):
+    def __init__(self, dim: int, spread: int):
         super().__init__()
-        
-        self.decay = mx.zeros((dim, ))
-        self.states = mx.zeros((dim, ))
 
+        halflives = mx.exp(mx.linspace(0.0, math.log(float(spread)), dim))
+        retention = mx.exp(-math.log(2.0) / halflives)
+        self.decay = mx.log(retention) - mx.log1p(-retention)
+    
+        self.states = mx.zeros((dim, ))
         self.decaytrace = mx.zeros((dim, ))
         self.embedtrace = mx.zeros((256, dim))
         
@@ -41,16 +37,17 @@ class Layer(nn.Module):
         self.weights = nn.Linear(dim, dim, bias = False)
         self.silu = nn.SiLU()
 
-        self.freeze(keys = ['states', 'decaytrace', 'embedtrace'], recurse = False)
+        self.freeze(keys = ['states', 'decaytrace', 'embedtrace'], recurse = False)        
 
     def __call__(self, enc: mx.array, x: mx.array, dummy: mx.array):
+        print(mx.max(self.decay))
         decay = mx.sigmoid(self.decay)
         state = (decay * self.states) + enc + dummy
 
         return x + self.silu(self.weights(self.norm(state))), state, decay
 
 class Model(nn.Module):
-    def __init__(self, dim: int, layers: int, temp: float, lr: float):
+    def __init__(self, dim: int, layers: int, spread: int, temp: float, lr: float, lrbegin: int, lrend: int):
         super().__init__()
         self.dim = dim
         self.layercount = layers
@@ -59,8 +56,16 @@ class Model(nn.Module):
         self.encoder = Encoder(dim)
         self.decoder = Decoder(dim)
 
-        self.layers = [Layer(dim) for _ in range(layers)]
-        self.optimizer = opt.AdamW(learning_rate = lr)
+        self.layers = [Layer(dim, spread) for _ in range(layers)]
+
+        def lrfn(step: mx.array):
+            progress = mx.clip(
+                (step.astype(mx.float32) + 1.0 - float(lrbegin)) / float(lrend - lrbegin),
+                0.0, 1.0
+            )
+            return lr * (1.0 - 0.9 * progress)
+
+        self.optimizer = opt.AdamW(learning_rate = lrfn)
 
     def sample(self, output: mx.array):
         probs = mx.softmax(output)
@@ -276,7 +281,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    runtime = Runtime(path = args.path, threshold = 0.35, dim = 512, layers = 16, temp = 0.75, lr = 5e-4)
+    runtime = Runtime(path = args.path, threshold = 0.35, dim = 512, layers = 16, spread = 64, temp = 0.75, lr = 5e-4, lrbegin = 40000, lrend = 120000)
     print(f'parameters: {runtime.model.count():,}')
 
     runtime(args.mode, args.dataset, args.no_save, args.frozen)
