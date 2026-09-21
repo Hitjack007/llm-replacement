@@ -40,7 +40,6 @@ class Layer(nn.Module):
         self.freeze(keys = ['states', 'decaytrace', 'embedtrace'], recurse = False)        
 
     def __call__(self, enc: mx.array, x: mx.array, dummy: mx.array):
-        print(mx.max(self.decay))
         decay = mx.sigmoid(self.decay)
         state = (decay * self.states) + enc + dummy
 
