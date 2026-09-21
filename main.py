@@ -280,7 +280,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    runtime = Runtime(path = args.path, threshold = 0.35, dim = 512, layers = 16, spread = 64, temp = 0.75, lr = 5e-4, lrbegin = 40000, lrend = 120000)
+    runtime = Runtime(path = args.path, threshold = 0.35, dim = 512, layers = 16, spread = 32, temp = 0.75, lr = 5e-4, lrbegin = 40000, lrend = 120000)
     print(f'parameters: {runtime.model.count():,}')
 
     runtime(args.mode, args.dataset, args.no_save, args.frozen)

@@ -71,7 +71,7 @@ def run(path: str, epochs: int, split: float, data: str):
     if not os.path.exists(path):
         raise FileNotFoundError(f'Model checkpoint not found at {path!r}.')
 
-    model = Model(dim = 512, layers = 16, spread = 64, temp = 0.75, lr = 5e-4, lrbegin = 40000, lrend = 120000)
+    model = Model(dim = 512, layers = 16, spread = 32, temp = 0.75, lr = 5e-4, lrbegin = 40000, lrend = 120000)
     model.load(path)
     model.freeze()
 
